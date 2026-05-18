@@ -36,8 +36,8 @@ def _default_db() -> dict:
         "admin_users": [
             {"_id": "a1", "username": "admin", "password": "admin123", "role": "Super Admin", "created_at": "2026-05-15"}
         ],
-        "attendance_log": [],   # daily attendance records
-        "audit_log": [],        # admin actions (add/delete/update)
+        "attendance_log": [],
+        "audit_log": [],
         "student_id_counter": 4,
         "admin_id_counter": 2
     }
@@ -160,22 +160,25 @@ class PersistentDatabase:
         self.attendance_log = PersistentCollection("attendance_log", "att_id_counter")
 
     # ── Helpers exposed to routes ──
-    def get_all_raw(self) -> dict:
+    async def get_all_raw(self) -> dict:
         return _load_db()
 
-    def append_audit(self, action: str, entity: str, detail: str, performed_by: str = "admin"):
+    async def append_audit(self, action: str, entity: str, detail: str, performed_by: str = "admin"):
         _append_audit(action, entity, detail, performed_by)
 
-    def get_audit_log(self):
+    async def get_audit_log(self):
         return _load_db().get("audit_log", [])
 
-    def save_attendance_record(self, record: dict):
+    async def save_raw(self, data: dict):
+        _save_db(data)
+
+    async def save_attendance_record(self, record: dict):
         """Save a daily attendance record (present/absent) for reporting."""
         data = _load_db()
         data.setdefault("attendance_log", []).append(record)
         _save_db(data)
 
-    def mark_absent_students(self, date_str: str):
+    async def mark_absent_students(self, date_str: str):
         """Mark all students who have no 'Today' timeline entry as Absent."""
         data = _load_db()
         students = data.get("students", [])
@@ -184,7 +187,6 @@ class PersistentDatabase:
             timeline = student.get("timeline", [])
             has_today = any(e.get("day") == "Today" for e in timeline)
             if not has_today:
-                # Add absent record
                 timeline.append({
                     "day": "Today",
                     "emoji": "Absent",
@@ -196,7 +198,6 @@ class PersistentDatabase:
                 student["timeline"] = timeline
                 student["risk"] = "Needs Attention"
                 absent_count += 1
-                # Log to attendance_log
                 data.setdefault("attendance_log", []).append({
                     "roll_number": student.get("rollNumber"),
                     "name": f"{student.get('firstName')} {student.get('lastInitial')}",
@@ -223,6 +224,3 @@ async def connect_to_mongo():
 
 async def close_mongo_connection():
     print("[DB] Database connection closed.")
-
-# legacy alias
-mock_db = None  # will be set lazily via get_database()

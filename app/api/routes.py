@@ -170,7 +170,7 @@ async def generate_magic_code():
     magic_code_state["expires_at"] = expires_at
     # Audit log
     db = get_database()
-    db.append_audit("GENERATE", "MagicCode", f"New code generated — expires at {expires_at.strftime('%H:%M UTC')}")
+    await db.append_audit("GENERATE", "MagicCode", f"New code generated — expires at {expires_at.strftime('%H:%M UTC')}")
     return await get_magic_code()
 
 # ──────────────────────────────────────────────
@@ -199,8 +199,7 @@ async def login(request: LoginRequest, db=Depends(get_database)):
     if not student_otp or student_otp.get("code") != request.otp:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid OTP")
     # Check unique OTP expiration
-    from app.database.connection import _load_db
-    data = _load_db()
+    data = await db.get_all_raw()
     settings = data.get("settings", {})
     expiration_hours = settings.get("otp_expiration_hours", 24)
     time_range_enabled = settings.get("otp_time_range_enabled", False)
@@ -238,7 +237,7 @@ async def login(request: LoginRequest, db=Depends(get_database)):
         await db.students.update_one({"rollNumber": request.roll_number}, {"$set": {"otp": new_otp}})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="OTP has expired. A new one has been generated automatically.")
 
-    db.append_audit("LOGIN", "Student", f"Student Roll {request.roll_number} logged in with unique OTP", request.roll_number)
+    await db.append_audit("LOGIN", "Student", f"Student Roll {request.roll_number} logged in with unique OTP", request.roll_number)
     return {"access_token": "mock_token", "token_type": "bearer", "student": {"roll_number": request.roll_number}}
 
 # ──────────────────────────────────────────────
@@ -249,7 +248,7 @@ async def teacher_login(request: TeacherLoginRequest, db=Depends(get_database)):
     user = await db.admin_users.find_one({"username": request.username, "password": request.password})
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    db.append_audit("LOGIN", "Admin", f"Admin '{request.username}' logged in", request.username)
+    await db.append_audit("LOGIN", "Admin", f"Admin '{request.username}' logged in", request.username)
     return {"access_token": "teacher_mock_token", "role": user.get("role", "Teacher"), "username": user["username"]}
 
 # ──────────────────────────────────────────────
@@ -267,7 +266,7 @@ async def create_admin_user(body: AdminUserRequest, db=Depends(get_database)):
         raise HTTPException(status_code=400, detail="Username already exists")
     now = datetime.utcnow().strftime("%Y-%m-%d")
     await db.admin_users.insert_one({"username": body.username, "password": body.password, "role": body.role, "created_at": now})
-    db.append_audit("CREATE", "AdminUser", f"New admin '{body.username}' (role: {body.role}) added")
+    await db.append_audit("CREATE", "AdminUser", f"New admin '{body.username}' (role: {body.role}) added")
     return {"message": "Admin user created successfully"}
 
 @router.delete("/admin-users/{username}")
@@ -275,7 +274,7 @@ async def delete_admin_user(username: str, db=Depends(get_database)):
     result = await db.admin_users.delete_one({"username": username})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
-    db.append_audit("DELETE", "AdminUser", f"Admin '{username}' removed from system")
+    await db.append_audit("DELETE", "AdminUser", f"Admin '{username}' removed from system")
     return {"message": f"User '{username}' deleted successfully"}
 
 # ──────────────────────────────────────────────
@@ -338,7 +337,7 @@ async def submit_wellness(submission: WellnessSubmission, background_tasks: Back
     # OTP remains active until it naturally expires based on the time configuration.
     
     # Save attendance record
-    db.save_attendance_record({
+    await db.save_attendance_record({
         "roll_number": submission.roll_number,
         "name": f"{student.get('firstName', '')} {student.get('lastInitial', '')}",
         "status": "present",
@@ -351,13 +350,14 @@ async def submit_wellness(submission: WellnessSubmission, background_tasks: Back
         "otp_used": student.get("otp", {}).get("code", "")
     })
 
-    db.append_audit("ATTENDANCE", "Student",
+    await db.append_audit("ATTENDANCE", "Student",
         f"Roll {submission.roll_number} submitted attendance — score {submission.feeling_level}/10, mood: {submission.selected_emoji}, risk: {risk}",
         submission.roll_number)
 
     if alert:
         # Fetch admin email setting
-        settings_data = db.get_all_raw().get("settings", {})
+        _all = await db.get_all_raw()
+        settings_data = _all.get("settings", {})
         admin_email = settings_data.get("admin_notification_email", "ulmindsocial.pvtltd@gmail.com")
         if not admin_email:
             admin_email = "ulmindsocial.pvtltd@gmail.com"
@@ -376,16 +376,17 @@ async def submit_wellness(submission: WellnessSubmission, background_tasks: Back
 # ──────────────────────────────────────────────
 @router.get("/settings/notifications")
 async def get_notifications(db=Depends(get_database)):
-    settings_data = db.get_all_raw().get("settings", {})
+    _all = await db.get_all_raw()
+    settings_data = _all.get("settings", {})
     return {"admin_notification_email": settings_data.get("admin_notification_email", "ulmindsocial.pvtltd@gmail.com")}
 
 @router.post("/settings/notifications")
 async def save_notifications(data: dict, db=Depends(get_database)):
-    raw = db.get_all_raw()
+    raw = await db.get_all_raw()
     if "settings" not in raw:
         raw["settings"] = {}
     raw["settings"]["admin_notification_email"] = data.get("admin_notification_email", "")
-    db.save_raw(raw)
+    await db.save_raw(raw)
     return {"status": "success"}
 
 # ──────────────────────────────────────────────
@@ -394,8 +395,8 @@ async def save_notifications(data: dict, db=Depends(get_database)):
 @router.post("/attendance/mark-absent")
 async def mark_absent(db=Depends(get_database)):
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
-    absent_count = db.mark_absent_students(today_str)
-    db.append_audit("ATTENDANCE", "System", f"End-of-day: {absent_count} student(s) marked absent for {today_str}")
+    absent_count = await db.mark_absent_students(today_str)
+    await db.append_audit("ATTENDANCE", "System", f"End-of-day: {absent_count} student(s) marked absent for {today_str}")
     return {"status": "success", "absent_count": absent_count, "date": today_str}
 
 # ──────────────────────────────────────────────
@@ -403,12 +404,12 @@ async def mark_absent(db=Depends(get_database)):
 # ──────────────────────────────────────────────
 @router.get("/attendance/log")
 async def get_attendance_log(db=Depends(get_database)):
-    data = db.get_all_raw()
+    data = await db.get_all_raw()
     return data.get("attendance_log", [])
 
 @router.get("/audit-log")
 async def get_audit_log(db=Depends(get_database)):
-    return db.get_audit_log()
+    return await db.get_audit_log()
 
 # ──────────────────────────────────────────────
 # Student CRUD
@@ -474,7 +475,7 @@ async def add_student(student: Student, db=Depends(get_database)):
     result = await db.students.insert_one(student_dict)
     student_dict["_id"] = str(result.inserted_id)
     student_dict["id"] = student_dict["_id"]
-    db.append_audit("CREATE", "Student",
+    await db.append_audit("CREATE", "Student",
         f"New student added: {student.firstName} {student.lastInitial} (Roll: {student.rollNumber}, Class: {student.class_name})")
     return student_dict
 
@@ -488,7 +489,7 @@ async def update_student(roll_number: str, student: Student, db=Depends(get_data
     updated = await db.students.find_one({"rollNumber": roll_number})
     updated["_id"] = str(updated["_id"])
     updated["id"] = updated["_id"]
-    db.append_audit("UPDATE", "Student",
+    await db.append_audit("UPDATE", "Student",
         f"Profile updated: {student.firstName} {student.lastInitial} (Roll: {roll_number})")
     return updated
 
@@ -501,7 +502,7 @@ async def delete_student(roll_number: str, db=Depends(get_database)):
     result = await db.students.delete_one({"rollNumber": roll_number})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Student not found")
-    db.append_audit("DELETE", "Student", f"Student removed: {name} (Roll: {roll_number})")
+    await db.append_audit("DELETE", "Student", f"Student removed: {name} (Roll: {roll_number})")
     return {"status": "success", "message": f"Student {name} deleted successfully"}
 
 @router.post("/students/upload_csv")
@@ -523,7 +524,7 @@ async def upload_students_csv(file: UploadFile = File(...), db=Depends(get_datab
         }
         await db.students.update_one({"rollNumber": student_data["rollNumber"]}, {"$set": student_data}, upsert=True)
         inserted_count += 1
-    db.append_audit("IMPORT", "Students", f"CSV import: {inserted_count} student(s) processed")
+    await db.append_audit("IMPORT", "Students", f"CSV import: {inserted_count} student(s) processed")
     return {"status": "success", "message": f"{inserted_count} students processed."}
 
 # ──────────────────────────────────────────────
@@ -554,7 +555,7 @@ async def resolve_alert(roll_number: str, date: str = "", db=Depends(get_databas
         await db.students.update_one({"rollNumber": roll_number}, {"$set": {"risk": "Stable"}})
         
     name = f"{student.get('firstName', '')} {student.get('lastInitial', '')}"
-    db.append_audit("RESOLVE", "Alert", f"Alert resolved for {name} (Roll: {roll_number}) on {date}")
+    await db.append_audit("RESOLVE", "Alert", f"Alert resolved for {name} (Roll: {roll_number}) on {date}")
     return {"status": "success", "message": "Alert resolved", "date": date}
 
 # ──────────────────────────────────────────────
@@ -569,7 +570,7 @@ async def toggle_student_status(roll_number: str, db=Depends(get_database)):
     new_status = "active" if current == "inactive" else "inactive"
     await db.students.update_one({"rollNumber": roll_number}, {"$set": {"status": new_status}})
     name = f"{student.get('firstName', '')} {student.get('lastInitial', '')}"
-    db.append_audit("STATUS", "Student", f"{name} (Roll: {roll_number}) marked {new_status}")
+    await db.append_audit("STATUS", "Student", f"{name} (Roll: {roll_number}) marked {new_status}")
     return {"status": "success", "new_status": new_status}
 
 # ──────────────────────────────────────────────
@@ -580,7 +581,7 @@ async def attendance_by_date(date: str = "", db=Depends(get_database)):
     """Get attendance records for a specific date (format: YYYY-MM-DD)."""
     if not date:
         date = datetime.utcnow().strftime("%Y-%m-%d")
-    data = db.get_all_raw()
+    data = await db.get_all_raw()
     logs = data.get("attendance_log", [])
     filtered = [r for r in logs if r.get("date") == date]
     return {"date": date, "records": filtered, "total_present": len(filtered)}
@@ -588,7 +589,7 @@ async def attendance_by_date(date: str = "", db=Depends(get_database)):
 @router.get("/attendance/dates")
 async def attendance_dates(db=Depends(get_database)):
     """Get list of all dates that have attendance records."""
-    data = db.get_all_raw()
+    data = await db.get_all_raw()
     logs = data.get("attendance_log", [])
     dates = sorted(list(set(r.get("date", "") for r in logs if r.get("date"))), reverse=True)
     date_counts = {}
@@ -608,7 +609,7 @@ class ColorSettings(BaseModel):
 
 @router.get("/settings/colors")
 async def get_color_settings(db=Depends(get_database)):
-    data = db.get_all_raw()
+    data = await db.get_all_raw()
     return data.get("settings", {
         "clock_emotions": {
             "1": "#6366f1", "2": "#818cf8", "3": "#a78bfa", "4": "#f472b6", "5": "#fb923c",
@@ -621,14 +622,13 @@ async def get_color_settings(db=Depends(get_database)):
 
 @router.post("/settings/colors")
 async def save_color_settings(settings: ColorSettings, db=Depends(get_database)):
-    from app.database.connection import _load_db, _save_db
-    data = _load_db()
+    data = await db.get_all_raw()
     if "settings" not in data:
         data["settings"] = {}
     data["settings"]["clock_emotions"] = settings.clock_emotions
     data["settings"]["puzzle_emotions"] = settings.puzzle_emotions
-    _save_db(data)
-    db.append_audit("SETTINGS", "Colors", "Admin updated the emotion color schemes")
+    await db.save_raw(data)
+    await db.append_audit("SETTINGS", "Colors", "Admin updated the emotion color schemes")
     return {"status": "success"}
 
 # ──────────────────────────────────────────────
@@ -643,8 +643,7 @@ class Question(BaseModel):
 
 @router.get("/questions/list")
 async def list_questions(db=Depends(get_database)):
-    from app.database.connection import _load_db, _save_db
-    data = _load_db()
+    data = await db.get_all_raw()
     questions = data.get("emotional_questions", [
         {"id": "q_sleep", "text": "Did you sleep well last night?", "targetType": "global", "enabled": True},
         {"id": "q_eat", "text": "Did you eat breakfast today?", "targetType": "global", "enabled": True},
@@ -655,16 +654,15 @@ async def list_questions(db=Depends(get_database)):
     # Ensure they exist
     if "emotional_questions" not in data:
         data["emotional_questions"] = questions
-        _save_db(data)
+        await db.save_raw(data)
     return questions
 
 @router.post("/questions/save")
 async def save_questions(req: List[Question], db=Depends(get_database)):
-    from app.database.connection import _load_db, _save_db
-    data = _load_db()
+    data = await db.get_all_raw()
     data["emotional_questions"] = [q.dict() for q in req]
-    _save_db(data)
-    db.append_audit("SETTINGS", "Questions", f"Admin updated emotional questions. Total active: {len([q for q in req if q.enabled])}")
+    await db.save_raw(data)
+    await db.append_audit("SETTINGS", "Questions", f"Admin updated emotional questions. Total active: {len([q for q in req if q.enabled])}")
     return {"status": "success"}
 
 @router.get("/wellness/questions")
@@ -677,7 +675,7 @@ async def get_student_questions(rollNumber: str, db=Depends(get_database)):
     student_section = student.get("section", "")
     class_str = f"{student_class} - {student_section}"
 
-    data = db.get_all_raw()
+    data = await db.get_all_raw()
     all_qs = data.get("emotional_questions", [
         {"id": "q_sleep", "text": "Did you sleep well last night?", "targetType": "global", "enabled": True},
         {"id": "q_eat", "text": "Did you eat breakfast today?", "targetType": "global", "enabled": True},
@@ -720,7 +718,7 @@ async def get_student_questions(rollNumber: str, db=Depends(get_database)):
 
 @router.get("/questions/history")
 async def get_questions_history(db=Depends(get_database)):
-    data = db.get_all_raw()
+    data = await db.get_all_raw()
     students = data.get("students", [])
     
     history = []
@@ -760,8 +758,7 @@ class OTPConfigRequest(BaseModel):
 
 @router.get("/settings/otp-config")
 async def get_otp_config(db=Depends(get_database)):
-    from app.database.connection import _load_db
-    data = _load_db()
+    data = await db.get_all_raw()
     settings = data.get("settings", {})
     return {
         "expiration_hours": settings.get("otp_expiration_hours", 24),
@@ -772,22 +769,20 @@ async def get_otp_config(db=Depends(get_database)):
 
 @router.post("/settings/otp-config")
 async def save_otp_config(req: OTPConfigRequest, db=Depends(get_database)):
-    from app.database.connection import _load_db, _save_db
-    data = _load_db()
+    data = await db.get_all_raw()
     if "settings" not in data:
         data["settings"] = {}
     data["settings"]["otp_expiration_hours"] = req.expiration_hours
     data["settings"]["otp_time_range_enabled"] = req.time_range_enabled
     data["settings"]["otp_start_time"] = req.start_time
     data["settings"]["otp_end_time"] = req.end_time
-    _save_db(data)
-    db.append_audit("SETTINGS", "OTP", f"Admin updated OTP settings")
+    await db.save_raw(data)
+    await db.append_audit("SETTINGS", "OTP", f"Admin updated OTP settings")
     return {"status": "success"}
 
 @router.get("/otps/list")
 async def list_otps(db=Depends(get_database)):
-    from app.database.connection import _load_db
-    data = _load_db()
+    data = await db.get_all_raw()
     expiration_hours = data.get("settings", {}).get("otp_expiration_hours", 24)
     now = datetime.utcnow()
     
@@ -845,12 +840,12 @@ async def generate_otps(req: GenerateOTPRequest, db=Depends(get_database)):
             await db.students.update_one({"rollNumber": s["rollNumber"]}, {"$set": {"otp": new_otp}})
             updated_count += 1
             
-    db.append_audit("GENERATE", "OTP", f"Generated {updated_count} new unique OTPs (Action: {req.action})")
+    await db.append_audit("GENERATE", "OTP", f"Generated {updated_count} new unique OTPs (Action: {req.action})")
     return {"status": "success", "updated": updated_count}
 
 @router.get("/otps/history")
 async def get_otp_history(db=Depends(get_database)):
-    data = db.get_all_raw()
+    data = await db.get_all_raw()
     logs = data.get("attendance_log", [])
     
     # Pre-fetch students to map class and name robustly
