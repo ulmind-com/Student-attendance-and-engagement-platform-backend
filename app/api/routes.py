@@ -423,9 +423,10 @@ async def search_students(q: str = "", db=Depends(get_database)):
     all_students = await db.students.find().to_list(length=1000)
     results = []
     for s in all_students:
-        full_name = f"{s.get('firstName', '')} {s.get('lastInitial', '')}".strip()
-        # Search by name, roll, or class
-        search_target = f"{full_name} {s.get('rollNumber', '')} {s.get('class_name', '')}".lower()
+        last_initial_full = s.get('lastInitial', '')
+        display_last = last_initial_full[0].upper() if last_initial_full else ''
+        display_name = f"{s.get('firstName', '')} {display_last}".strip()
+        search_target = f"{s.get('firstName', '')} {last_initial_full} {s.get('rollNumber', '')} {s.get('class_name', '')}".lower()
         
         if query_lower in search_target:
             # Get latest emotion from timeline
@@ -438,9 +439,9 @@ async def search_students(q: str = "", db=Depends(get_database)):
                 
             results.append({
                 "id": str(s["_id"]),
-                "fullName": full_name,
+                "fullName": display_name,
                 "firstName": s.get("firstName", ""),
-                "lastInitial": s.get("lastInitial", ""),
+                "lastInitial": last_initial_full,
                 "rollNumber": s.get("rollNumber", ""),
                 "className": s.get("class_name", s.get("class", "")),
                 "emotion": latest_emotion,
