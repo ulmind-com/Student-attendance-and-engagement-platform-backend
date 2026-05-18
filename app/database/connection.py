@@ -3,15 +3,21 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 
-# ── Persistent Storage Path ──
+load_dotenv()
+
+MONGO_URI = os.getenv("MONGODB_URI", "")
+DB_NAME = "kids_attendance"
+USE_MONGO = bool(MONGO_URI)
+
+# ── Persistent JSON Fallback Path ──
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_FILE = DATA_DIR / "database.json"
-AUDIT_FILE = DATA_DIR / "audit_log.json"
 
 # ──────────────────────────────────────────────
-# JSON Persistence helpers
+# JSON Persistence helpers (local fallback)
 # ──────────────────────────────────────────────
 def _load_db() -> dict:
     if DB_FILE.exists():
@@ -42,20 +48,8 @@ def _default_db() -> dict:
         "admin_id_counter": 2
     }
 
-def _append_audit(action: str, entity: str, detail: str, performed_by: str = "admin"):
-    data = _load_db()
-    data.setdefault("audit_log", []).append({
-        "action": action,
-        "entity": entity,
-        "detail": detail,
-        "performed_by": performed_by,
-        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    })
-    _save_db(data)
-
-
 # ──────────────────────────────────────────────
-# MockCursor / MockResult
+# MockCursor / MockResult (for JSON mode)
 # ──────────────────────────────────────────────
 class MockCursor:
     def __init__(self, data):
@@ -69,10 +63,6 @@ class MockResult:
         self.matched_count = matched_count
         self.deleted_count = deleted_count
 
-
-# ──────────────────────────────────────────────
-# Persistent Collection
-# ──────────────────────────────────────────────
 class PersistentCollection:
     def __init__(self, collection_name: str, id_counter_key: str):
         self.name = collection_name
@@ -144,72 +134,121 @@ class PersistentCollection:
 
 
 # ──────────────────────────────────────────────
+# MongoDB Motor Collection Wrapper
+# ──────────────────────────────────────────────
+class MongoCollectionWrapper:
+    """Thin wrapper around Motor collection to normalize _id to str."""
+    def __init__(self, collection):
+        self.col = collection
+
+    def find(self, query: dict = None):
+        return self.col.find(query or {})
+
+    async def find_one(self, query: dict):
+        return await self.col.find_one(query)
+
+    async def insert_one(self, document: dict):
+        result = await self.col.insert_one(document)
+        return MockResult(inserted_id=str(result.inserted_id))
+
+    async def update_one(self, query: dict, update: dict, upsert: bool = False):
+        result = await self.col.update_one(query, update, upsert=upsert)
+        return MockResult(matched_count=result.matched_count)
+
+    async def delete_one(self, query: dict):
+        result = await self.col.delete_one(query)
+        return MockResult(matched_count=result.deleted_count, deleted_count=result.deleted_count)
+
+
+# ──────────────────────────────────────────────
 # Database class
 # ──────────────────────────────────────────────
 class PersistentDatabase:
-    def __init__(self):
-        # Seed default data if DB file doesn't exist
-        if not DB_FILE.exists():
-            _save_db(_default_db())
-            print(f"[DB] Fresh database created at {DB_FILE}")
+    def __init__(self, mongo_db=None):
+        self._mongo_db = mongo_db
+        self._using_mongo = mongo_db is not None
+
+        if self._using_mongo:
+            self.students = MongoCollectionWrapper(mongo_db["students"])
+            self.admin_users = MongoCollectionWrapper(mongo_db["admin_users"])
+            self.attendance_log = MongoCollectionWrapper(mongo_db["attendance_log"])
+            self._audit_col = mongo_db["audit_log"]
+            self._store_col = mongo_db["general_store"]
         else:
-            print(f"[DB] Loaded existing database from {DB_FILE}")
+            self.students = PersistentCollection("students", "student_id_counter")
+            self.admin_users = PersistentCollection("admin_users", "admin_id_counter")
+            self.attendance_log = PersistentCollection("attendance_log", "att_id_counter")
 
-        self.students     = PersistentCollection("students",     "student_id_counter")
-        self.admin_users  = PersistentCollection("admin_users",  "admin_id_counter")
-        self.attendance_log = PersistentCollection("attendance_log", "att_id_counter")
-
-    # ── Helpers exposed to routes ──
+    # ── Helpers ──
     async def get_all_raw(self) -> dict:
+        if self._using_mongo:
+            doc = await self._store_col.find_one({"_id": "global_store"})
+            return doc or {}
         return _load_db()
 
+    async def save_raw(self, data: dict):
+        if self._using_mongo:
+            update_data = {k: v for k, v in data.items() if k not in ["_id"]}
+            await self._store_col.update_one(
+                {"_id": "global_store"}, {"$set": update_data}, upsert=True
+            )
+        else:
+            _save_db(data)
+
     async def append_audit(self, action: str, entity: str, detail: str, performed_by: str = "admin"):
-        _append_audit(action, entity, detail, performed_by)
+        entry = {
+            "action": action,
+            "entity": entity,
+            "detail": detail,
+            "performed_by": performed_by,
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        }
+        if self._using_mongo:
+            await self._audit_col.insert_one(entry)
+        else:
+            data = _load_db()
+            data.setdefault("audit_log", []).append(entry)
+            _save_db(data)
 
     async def get_audit_log(self):
+        if self._using_mongo:
+            cursor = self._audit_col.find().sort("timestamp", -1)
+            return await cursor.to_list(length=1000)
         return _load_db().get("audit_log", [])
 
-    async def save_raw(self, data: dict):
-        _save_db(data)
-
     async def save_attendance_record(self, record: dict):
-        """Save a daily attendance record (present/absent) for reporting."""
-        data = _load_db()
-        data.setdefault("attendance_log", []).append(record)
-        _save_db(data)
+        if self._using_mongo:
+            await self._mongo_db["attendance_log"].insert_one(record)
+        else:
+            data = _load_db()
+            data.setdefault("attendance_log", []).append(record)
+            _save_db(data)
 
     async def mark_absent_students(self, date_str: str):
-        """Mark all students who have no 'Today' timeline entry as Absent."""
-        data = _load_db()
-        students = data.get("students", [])
+        students_list = await self.students.find().to_list(length=1000)
         absent_count = 0
-        for student in students:
+        for student in students_list:
             timeline = student.get("timeline", [])
-            has_today = any(e.get("day") == "Today" for e in timeline)
+            has_today = any(e.get("day") == "Today" or e.get("date") == date_str for e in timeline)
             if not has_today:
-                timeline.append({
-                    "day": "Today",
-                    "emoji": "Absent",
-                    "score": 0,
-                    "alert": True,
-                    "status": "absent",
-                    "date": date_str
-                })
-                student["timeline"] = timeline
-                student["risk"] = "Needs Attention"
+                timeline.append({"day": "Today", "emoji": "Absent", "score": 0, "alert": True, "status": "absent", "date": date_str})
+                await self.students.update_one(
+                    {"rollNumber": student["rollNumber"]},
+                    {"$set": {"timeline": timeline, "risk": "Needs Attention"}}
+                )
                 absent_count += 1
-                data.setdefault("attendance_log", []).append({
+                await self.save_attendance_record({
                     "roll_number": student.get("rollNumber"),
                     "name": f"{student.get('firstName')} {student.get('lastInitial')}",
                     "status": "absent",
                     "date": date_str
                 })
-        data["students"] = students
-        _save_db(data)
         return absent_count
 
 
+# ──────────────────────────────────────────────
 # Singleton
+# ──────────────────────────────────────────────
 _db_instance = None
 
 def get_database() -> PersistentDatabase:
@@ -219,8 +258,43 @@ def get_database() -> PersistentDatabase:
     return _db_instance
 
 async def connect_to_mongo():
-    db = get_database()
-    print(f"[DB] Persistent JSON database ready — {DB_FILE}")
+    global _db_instance
+
+    if not MONGO_URI:
+        print("[DB] No MONGODB_URI found — using local JSON database")
+        _db_instance = PersistentDatabase()
+        if not DB_FILE.exists():
+            _save_db(_default_db())
+        return
+
+    try:
+        from motor.motor_asyncio import AsyncIOMotorClient
+        print(f"[DB] Connecting to MongoDB Atlas...")
+        client = AsyncIOMotorClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=10000,
+            tlsAllowInvalidCertificates=False
+        )
+        db = client[DB_NAME]
+        # Quick test
+        await db.command("ping")
+        _db_instance = PersistentDatabase(mongo_db=db)
+
+        # Seed admin if not exists
+        admin = await db.admin_users.find_one({"username": "admin"})
+        if not admin:
+            await db.admin_users.insert_one({
+                "username": "admin", "password": "admin123",
+                "role": "Super Admin", "created_at": datetime.utcnow().strftime("%Y-%m-%d")
+            })
+        print(f"[DB] ✅ Connected to MongoDB Atlas → {DB_NAME}")
+
+    except Exception as e:
+        print(f"[DB] ⚠️  MongoDB connection failed: {e}")
+        print(f"[DB] 🔄 Falling back to local JSON database")
+        _db_instance = PersistentDatabase()
+        if not DB_FILE.exists():
+            _save_db(_default_db())
 
 async def close_mongo_connection():
     print("[DB] Database connection closed.")
