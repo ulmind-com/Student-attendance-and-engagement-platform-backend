@@ -813,7 +813,7 @@ async def list_otps(db=Depends(get_database)):
         result.append({
             "rollNumber": s["rollNumber"],
             "name": f"{s.get('firstName', '')} {s.get('lastInitial', '')}",
-            "className": s.get("class", "Nursery"),
+            "className": s.get("class_name", s.get("class", "Nursery")),
             "section": s.get("section", "A"),
             "otp": otp_data,
             "profilePhoto": s.get("profilePhoto"),
@@ -830,7 +830,7 @@ async def generate_otps(req: GenerateOTPRequest, db=Depends(get_database)):
         should_update = False
         if req.action == "all":
             should_update = True
-        elif req.action == "class" and s.get("class") == req.class_name and s.get("section") == req.section_name:
+        elif req.action == "class" and s.get("class_name", s.get("class")) == req.class_name and s.get("section") == req.section_name:
             should_update = True
         elif req.action == "student" and s.get("rollNumber") == req.roll_number:
             should_update = True
