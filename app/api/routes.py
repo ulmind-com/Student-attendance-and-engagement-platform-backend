@@ -601,6 +601,37 @@ async def attendance_dates(db=Depends(get_database)):
     return [{"date": d, "count": date_counts.get(d, 0)} for d in dates]
 
 # ──────────────────────────────────────────────
+# School Settings
+# ──────────────────────────────────────────────
+@router.get("/settings/school")
+async def get_school_settings(db=Depends(get_database)):
+    try:
+        if hasattr(db, 'db') and db.db is not None:
+            doc = await db.db["school_settings"].find_one({"_id": "school_info"})
+            if doc:
+                doc.pop("_id", None)
+                return doc
+        return {}
+    except Exception as e:
+        print(f"Error fetching school settings: {e}")
+        return {}
+
+@router.post("/settings/school")
+async def save_school_settings(request: Request, db=Depends(get_database)):
+    data = await request.json()
+    try:
+        if hasattr(db, 'db') and db.db is not None:
+            data["_id"] = "school_info"
+            await db.db["school_settings"].replace_one(
+                {"_id": "school_info"}, data, upsert=True
+            )
+            return {"status": "success"}
+        return {"status": "error", "message": "Database not available"}
+    except Exception as e:
+        print(f"Error saving school settings: {e}")
+        return {"status": "error", "message": str(e)}
+
+# ──────────────────────────────────────────────
 # Classes Management
 # ──────────────────────────────────────────────
 # ──────────────────────────────────────────────
