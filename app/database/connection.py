@@ -172,12 +172,16 @@ class PersistentDatabase:
             self.students = MongoCollectionWrapper(mongo_db["students"])
             self.admin_users = MongoCollectionWrapper(mongo_db["admin_users"])
             self.attendance_log = MongoCollectionWrapper(mongo_db["attendance_log"])
+            self.classes = MongoCollectionWrapper(mongo_db["classes"])
+            self.teachers = MongoCollectionWrapper(mongo_db["teachers"])
             self._audit_col = mongo_db["audit_log"]
             self._store_col = mongo_db["general_store"]
         else:
             self.students = PersistentCollection("students", "student_id_counter")
             self.admin_users = PersistentCollection("admin_users", "admin_id_counter")
             self.attendance_log = PersistentCollection("attendance_log", "att_id_counter")
+            self.classes = PersistentCollection("classes", "classes_id_counter")
+            self.teachers = PersistentCollection("teachers", "teachers_id_counter")
 
     # ── Helpers ──
     async def get_all_raw(self) -> dict:

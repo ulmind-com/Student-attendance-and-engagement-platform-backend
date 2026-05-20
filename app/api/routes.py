@@ -600,6 +600,84 @@ async def attendance_dates(db=Depends(get_database)):
             date_counts[d] = date_counts.get(d, 0) + 1
     return [{"date": d, "count": date_counts.get(d, 0)} for d in dates]
 
+# ──────────────────────────────────────────────
+# Classes Management
+# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────
+# Classes & Teachers Management
+# ──────────────────────────────────────────────
+class ClassItem(BaseModel):
+    id: int
+    name: str
+    teacher: str
+    students: int
+    limit: int
+
+class TeacherItem(BaseModel):
+    id: int
+    name: str
+    subject: str
+    classes: List[str]
+
+class SchoolDataRequest(BaseModel):
+    classes: List[ClassItem]
+    teachers: List[TeacherItem]
+
+@router.get("/settings/classes")
+async def get_classes(db=Depends(get_database)):
+    classes = await db.classes.find().to_list(1000)
+    teachers = await db.teachers.find().to_list(1000)
+    
+    # Format _id to string or map to id
+    class_list = []
+    for c in classes:
+        c["id"] = int(c.get("id", c.get("_id", 0))) if str(c.get("id", c.get("_id", 0))).isdigit() else str(c.get("_id"))
+        c.pop("_id", None)
+        class_list.append(c)
+        
+    teacher_list = []
+    for t in teachers:
+        t["id"] = int(t.get("id", t.get("_id", 0))) if str(t.get("id", t.get("_id", 0))).isdigit() else str(t.get("_id"))
+        t.pop("_id", None)
+        teacher_list.append(t)
+        
+    return {
+        "classes": class_list if class_list else [
+            { "id": 1, "name": "Nursery-A", "teacher": "Emma Watson", "students": 18, "limit": 30 },
+            { "id": 2, "name": "Nursery-B", "teacher": "Priya Sharma", "students": 22, "limit": 30 },
+            { "id": 3, "name": "KG-A", "teacher": "Anita Roy", "students": 15, "limit": 25 },
+        ],
+        "teachers": teacher_list if teacher_list else [
+            { "id": 1, "name": "Emma Watson", "subject": "Class Teacher", "classes": ["Nursery-A"] },
+            { "id": 2, "name": "Priya Sharma", "subject": "Class Teacher", "classes": ["Nursery-B"] },
+        ]
+    }
+
+@router.post("/settings/classes")
+async def save_classes(school_data: SchoolDataRequest, db=Depends(get_database)):
+    # Clear existing and insert new ones
+    # (A bit inefficient but simplest way to replace the whole list like save_raw did)
+    if hasattr(db.classes, 'col'):
+        await db.classes.col.delete_many({})
+        if school_data.classes:
+            await db.classes.col.insert_many([c.dict() for c in school_data.classes])
+    else:
+        # Mock database fallback
+        data = await db.get_all_raw()
+        data["classes"] = [c.dict() for c in school_data.classes]
+        await db.save_raw(data)
+        
+    if hasattr(db.teachers, 'col'):
+        await db.teachers.col.delete_many({})
+        if school_data.teachers:
+            await db.teachers.col.insert_many([t.dict() for t in school_data.teachers])
+    else:
+        data = await db.get_all_raw()
+        data["teachers"] = [t.dict() for t in school_data.teachers]
+        await db.save_raw(data)
+
+    await db.append_audit("SETTINGS", "Classes & Teachers", "Admin updated the class and teacher lists")
+    return {"status": "success"}
 
 from pydantic import BaseModel
 from typing import Dict, Any
