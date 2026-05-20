@@ -257,7 +257,7 @@ async def teacher_login(request: TeacherLoginRequest, db=Depends(get_database)):
 @router.get("/admin-users")
 async def get_admin_users(db=Depends(get_database)):
     users = await db.admin_users.find().to_list(100)
-    return [{"id": u["_id"], "username": u["username"], "role": u.get("role", "Teacher"), "created_at": u.get("created_at", "")} for u in users]
+    return [{"id": str(u["_id"]), "username": u["username"], "role": u.get("role", "Teacher"), "created_at": u.get("created_at", "")} for u in users]
 
 @router.post("/admin-users")
 async def create_admin_user(body: AdminUserRequest, db=Depends(get_database)):
