@@ -609,6 +609,7 @@ async def attendance_dates(db=Depends(get_database)):
 class ClassItem(BaseModel):
     id: int
     name: str
+    section: Optional[str] = ""
     teacher: str
     students: int
     limit: int
