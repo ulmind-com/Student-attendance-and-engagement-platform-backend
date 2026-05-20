@@ -606,12 +606,16 @@ async def attendance_dates(db=Depends(get_database)):
 @router.get("/settings/school")
 async def get_school_settings(db=Depends(get_database)):
     try:
-        if hasattr(db, 'db') and db.db is not None:
-            doc = await db.db["school_settings"].find_one({"_id": "school_info"})
+        if hasattr(db, '_mongo_db') and db._mongo_db is not None:
+            doc = await db._mongo_db["school_settings"].find_one({"_id": "school_info"})
             if doc:
                 doc.pop("_id", None)
                 return doc
-        return {}
+            return {}
+        else:
+            # JSON fallback
+            raw = await db.get_all_raw()
+            return raw.get("school_settings", {})
     except Exception as e:
         print(f"Error fetching school settings: {e}")
         return {}
@@ -620,13 +624,18 @@ async def get_school_settings(db=Depends(get_database)):
 async def save_school_settings(request: Request, db=Depends(get_database)):
     data = await request.json()
     try:
-        if hasattr(db, 'db') and db.db is not None:
+        if hasattr(db, '_mongo_db') and db._mongo_db is not None:
             data["_id"] = "school_info"
-            await db.db["school_settings"].replace_one(
+            await db._mongo_db["school_settings"].replace_one(
                 {"_id": "school_info"}, data, upsert=True
             )
             return {"status": "success"}
-        return {"status": "error", "message": "Database not available"}
+        else:
+            # JSON fallback
+            raw = await db.get_all_raw()
+            raw["school_settings"] = data
+            await db.save_raw(raw)
+            return {"status": "success"}
     except Exception as e:
         print(f"Error saving school settings: {e}")
         return {"status": "error", "message": str(e)}
