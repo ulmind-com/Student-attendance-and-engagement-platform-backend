@@ -277,6 +277,25 @@ async def delete_admin_user(username: str, db=Depends(get_database)):
     await db.append_audit("DELETE", "AdminUser", f"Admin '{username}' removed from system")
     return {"message": f"User '{username}' deleted successfully"}
 
+@router.put("/admin-users/{username}")
+async def update_admin_user(username: str, request: Request, db=Depends(get_database)):
+    data = await request.json()
+    update_fields = {}
+    if data.get("new_username"):
+        update_fields["username"] = data["new_username"]
+    if data.get("new_password"):
+        update_fields["password"] = data["new_password"]
+    if data.get("role"):
+        update_fields["role"] = data["role"]
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    result = await db.admin_users.update_one({"username": username}, {"$set": update_fields})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.append_audit("UPDATE", "AdminUser", f"Admin '{username}' credentials updated")
+    return {"message": "User updated successfully"}
+
+
 # ──────────────────────────────────────────────
 # Attendance Check
 # ──────────────────────────────────────────────
