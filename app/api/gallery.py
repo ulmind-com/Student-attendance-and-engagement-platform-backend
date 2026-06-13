@@ -43,7 +43,8 @@ async def list_folders(visible_only: bool = False, db=Depends(get_database)):
     query = {"is_visible_to_students": True} if visible_only else {}
     folders = await db.gallery_folders.find(query).to_list(1000)
     for f in folders:
-        f["id"] = str(f.get("_id"))
+        f["_id"] = str(f.get("_id"))
+        f["id"] = f["_id"]
     return folders
 
 @router.put("/folders/{folder_id}", response_model=GalleryFolder)
@@ -131,7 +132,8 @@ async def upload_photos(
 async def list_photos(folder_id: str, db=Depends(get_database)):
     photos = await db.gallery_photos.find({"folder_id": folder_id}).to_list(1000)
     for p in photos:
-        p["id"] = str(p.get("_id"))
+        p["_id"] = str(p.get("_id"))
+        p["id"] = p["_id"]
     # Sort by display_order, then created_at
     photos.sort(key=lambda x: (x.get("display_order", 0), str(x.get("created_at", ""))))
     return photos
@@ -165,7 +167,8 @@ async def get_recent_photos(limit: int = 10, db=Depends(get_database)):
         # Attach folder name
         folder_name = next((f["folder_name"] for f in folders if str(f["_id"]) == fid), "Gallery")
         for p in photos:
-            p["id"] = str(p.get("_id"))
+            p["_id"] = str(p.get("_id"))
+            p["id"] = p["_id"]
             p["folderName"] = folder_name
             p["title"] = p.get("image_name", "")
             p["url"] = p.get("image_url", "")
