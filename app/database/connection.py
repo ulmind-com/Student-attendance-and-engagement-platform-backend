@@ -1,7 +1,9 @@
 import asyncio
 import json
 import os
+from typing import Optional, List
 from datetime import datetime
+from bson.objectid import ObjectId
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -145,22 +147,33 @@ class MongoCollectionWrapper:
     def __init__(self, collection):
         self.col = collection
 
+    def _convert_query(self, query: dict):
+        if not query:
+            return {}
+        query = dict(query)
+        if "_id" in query and isinstance(query["_id"], str):
+            try:
+                query["_id"] = ObjectId(query["_id"])
+            except Exception:
+                pass
+        return query
+
     def find(self, query: dict = None):
-        return self.col.find(query or {})
+        return self.col.find(self._convert_query(query))
 
     async def find_one(self, query: dict):
-        return await self.col.find_one(query)
+        return await self.col.find_one(self._convert_query(query))
 
     async def insert_one(self, document: dict):
         result = await self.col.insert_one(document)
         return MockResult(inserted_id=str(result.inserted_id))
 
     async def update_one(self, query: dict, update: dict, upsert: bool = False):
-        result = await self.col.update_one(query, update, upsert=upsert)
+        result = await self.col.update_one(self._convert_query(query), update, upsert=upsert)
         return MockResult(matched_count=result.matched_count)
 
     async def delete_one(self, query: dict):
-        result = await self.col.delete_one(query)
+        result = await self.col.delete_one(self._convert_query(query))
         return MockResult(matched_count=result.deleted_count, deleted_count=result.deleted_count)
 
 
