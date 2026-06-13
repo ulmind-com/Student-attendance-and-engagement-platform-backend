@@ -45,7 +45,11 @@ def _default_db() -> dict:
         "attendance_log": [],
         "audit_log": [],
         "student_id_counter": 4,
-        "admin_id_counter": 2
+        "admin_id_counter": 2,
+        "gallery_folders": [],
+        "gallery_photos": [],
+        "gallery_folder_id_counter": 1,
+        "gallery_photo_id_counter": 1
     }
 
 # ──────────────────────────────────────────────
@@ -174,6 +178,8 @@ class PersistentDatabase:
             self.attendance_log = MongoCollectionWrapper(mongo_db["attendance_log"])
             self.classes = MongoCollectionWrapper(mongo_db["classes"])
             self.teachers = MongoCollectionWrapper(mongo_db["teachers"])
+            self.gallery_folders = MongoCollectionWrapper(mongo_db["gallery_folders"])
+            self.gallery_photos = MongoCollectionWrapper(mongo_db["gallery_photos"])
             self._audit_col = mongo_db["audit_log"]
             self._store_col = mongo_db["general_store"]
         else:
@@ -182,6 +188,8 @@ class PersistentDatabase:
             self.attendance_log = PersistentCollection("attendance_log", "att_id_counter")
             self.classes = PersistentCollection("classes", "classes_id_counter")
             self.teachers = PersistentCollection("teachers", "teachers_id_counter")
+            self.gallery_folders = PersistentCollection("gallery_folders", "gallery_folder_id_counter")
+            self.gallery_photos = PersistentCollection("gallery_photos", "gallery_photo_id_counter")
 
     # ── Helpers ──
     async def get_all_raw(self) -> dict:

@@ -47,3 +47,31 @@ class WellnessAlert(BaseModel):
     message: str
     resolved: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class GalleryFolder(BaseModel):
+    id: Optional[str] = Field(alias="_id", default=None)
+    folder_name: str
+    description: Optional[str] = ""
+    is_visible_to_students: bool = True
+    cover_image: Optional[str] = ""
+    created_by: Optional[str] = "Admin"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    class Config:
+        populate_by_name = True
+        extra = "allow"
+
+class GalleryPhoto(BaseModel):
+    id: Optional[str] = Field(alias="_id", default=None)
+    folder_id: str
+    image_url: str
+    image_name: str
+    image_size: int = 0
+    display_order: int = 0
+    uploaded_by: Optional[str] = "Admin"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Config:
+        populate_by_name = True
+        extra = "allow"
