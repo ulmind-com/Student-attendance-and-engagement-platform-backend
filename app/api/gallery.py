@@ -123,7 +123,10 @@ async def upload_photos(
                 
         except Exception as e:
             print(f"Error uploading photo: {e}")
-            continue
+            raise HTTPException(status_code=500, detail=f"Cloudinary Error: {str(e)}")
+
+    if not uploaded_photos:
+        raise HTTPException(status_code=400, detail="No photos were uploaded successfully.")
 
     await db.append_audit("UPLOAD", "GalleryPhoto", f"Uploaded {len(uploaded_photos)} photos to folder {folder_id}")
     return {"status": "success", "uploaded": uploaded_photos}
