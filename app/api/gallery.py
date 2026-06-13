@@ -100,7 +100,12 @@ async def upload_photos(
     uploaded_photos = []
     for file in files:
         try:
-            res = cloudinary.uploader.upload(file.file, folder="gallery")
+            # Use unsigned upload to avoid api_secret signature issues on production
+            res = cloudinary.uploader.unsigned_upload(
+                file.file, 
+                upload_preset="students_unsigned", 
+                folder="gallery"
+            )
             new_photo = GalleryPhoto(
                 folder_id=folder_id,
                 image_url=res.get("secure_url"),
