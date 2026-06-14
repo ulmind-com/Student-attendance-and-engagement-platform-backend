@@ -68,7 +68,8 @@ async def update_folder(folder_id: str, request: CreateFolderRequest, db=Depends
         
     updated = await db.gallery_folders.find_one({"_id": folder_id})
     if updated:
-        updated["id"] = str(updated["_id"])
+        updated["_id"] = str(updated.get("_id"))
+        updated["id"] = updated["_id"]
     await db.append_audit("UPDATE", "GalleryFolder", f"Updated folder: {folder_id}")
     return updated
 
