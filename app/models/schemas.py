@@ -53,6 +53,7 @@ class GalleryFolder(BaseModel):
     folder_name: str
     description: Optional[str] = ""
     is_visible_to_students: bool = True
+    assigned_section: Optional[str] = "All"
     cover_image: Optional[str] = ""
     created_by: Optional[str] = "Admin"
     created_at: datetime = Field(default_factory=datetime.utcnow)

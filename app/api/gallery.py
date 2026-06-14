@@ -15,6 +15,7 @@ class CreateFolderRequest(BaseModel):
     folder_name: str
     description: Optional[str] = ""
     is_visible_to_students: bool = True
+    assigned_section: Optional[str] = "All"
     cover_image: Optional[str] = ""
 
 class ReorderPhotoRequest(BaseModel):
@@ -26,6 +27,7 @@ async def create_folder(request: CreateFolderRequest, db=Depends(get_database)):
         folder_name=request.folder_name,
         description=request.description,
         is_visible_to_students=request.is_visible_to_students,
+        assigned_section=request.assigned_section,
         cover_image=request.cover_image,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
@@ -53,6 +55,7 @@ async def update_folder(folder_id: str, request: CreateFolderRequest, db=Depends
         "folder_name": request.folder_name,
         "description": request.description,
         "is_visible_to_students": request.is_visible_to_students,
+        "assigned_section": request.assigned_section,
         "updated_at": datetime.utcnow()
     }
     if request.cover_image:
@@ -162,9 +165,14 @@ async def set_cover(folder_id: str, image_url: str = Form(...), db=Depends(get_d
     return {"status": "success", "cover_image": image_url}
 
 @router.get("/recent")
-async def get_recent_photos(limit: int = 10, db=Depends(get_database)):
+async def get_recent_photos(limit: int = 10, section: Optional[str] = "All", db=Depends(get_database)):
     # Get visible folders
-    folders = await db.gallery_folders.find({"is_visible_to_students": True}).to_list(100)
+    query = {"is_visible_to_students": True}
+    if section != "All":
+        # Allow folders explicitly assigned to this section OR folders assigned to 'All'
+        query["assigned_section"] = {"$in": [section, "All"]}
+        
+    folders = await db.gallery_folders.find(query).to_list(100)
     visible_folder_ids = [str(f["_id"]) for f in folders]
     
     # Get photos belonging to visible folders
